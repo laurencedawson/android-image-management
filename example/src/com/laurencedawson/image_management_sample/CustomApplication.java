@@ -29,7 +29,7 @@ public class CustomApplication extends Application {
   public void onCreate() {
     super.onCreate();
     
-    mImageManager = new ImageManager(getApplicationContext(),8,2);
+    mImageManager = new ImageManager(getApplicationContext(),8,4);
   }
   
   public ImageManager getImageManager(){

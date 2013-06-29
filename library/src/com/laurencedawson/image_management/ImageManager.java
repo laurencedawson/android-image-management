@@ -169,6 +169,7 @@ public class ImageManager {
 
     // Decide which pool to execute in
     int pool = Math.abs(url.hashCode()) % mThreadPool.length;
+    System.out.println("POOL "+pool);
 
     mThreadPool[pool].execute(new Runnable() {
       @Override
