@@ -1,0 +1,2 @@
+int drawable ic_menu_image 0x7f020000
+int drawable ic_menu_share 0x7f020001

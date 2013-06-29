@@ -1,0 +1,5 @@
+int drawable ic_menu_image 0x7f020000
+int drawable ic_menu_share 0x7f020001
+int id imageViewLeft 0x7f040000
+int id imageViewRight 0x7f040001
+int layout activity_main 0x7f030000
