@@ -19,3 +19,4 @@ gen/
 
 # Eclipse
 .settings
+.classpath
