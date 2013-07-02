@@ -18,6 +18,7 @@
 package com.laurencedawson.image_management;
 
 import java.io.File;
+import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.InputStream;
 import java.net.HttpURLConnection;
@@ -33,6 +34,7 @@ import android.content.Context;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.BitmapFactory.Options;
+import android.net.Uri;
 import android.os.Build;
 import android.support.v4.util.LruCache;
 
@@ -169,7 +171,6 @@ public class ImageManager {
 
     // Decide which pool to execute in
     int pool = Math.abs(url.hashCode()) % mThreadPool.length;
-    System.out.println("POOL "+pool);
 
     mThreadPool[pool].execute(new Runnable() {
       @Override
@@ -186,25 +187,31 @@ public class ImageManager {
           }
         }
 
-        // Grab a link to the file
-        File ff = new File(getFullCacheFileName(mContext, url));
+        File ff = null;
 
-        // If the file doesn't exist, grab it from the network
-        if (!ff.exists()){
-          cacheImage( ff, url, callback);
-        } 
+        // If the URL is not a local reseource, grab the file
+        if(!url.startsWith("content://")){
 
-        // Otherwise let the callback know the image is cached
-        else if(callback!=null){
-          callback.sendCachedCallback(url, true);
-        }
+          // Grab a link to the file
+          ff = new File(getFullCacheFileName(mContext, url));
 
-        // Check if the file is a gif
-        boolean isGif = isGif(url);
+          // If the file doesn't exist, grab it from the network
+          if (!ff.exists()){
+            cacheImage( ff, url, callback);
+          } 
 
-        // If the file downloaded was a gif, tell all the callbacks
-        if( isGif && callback!=null ){
-          callback.sendGifCallback(url);
+          // Otherwise let the callback know the image is cached
+          else if(callback!=null){
+            callback.sendCachedCallback(url, true);
+          }
+
+          // Check if the file is a gif
+          boolean isGif = isGif(url);
+
+          // If the file downloaded was a gif, tell all the callbacks
+          if( isGif && callback!=null ){
+            callback.sendGifCallback(url);
+          }
         }
 
         // Check if we should cache the image and the dimens
@@ -227,7 +234,20 @@ public class ImageManager {
           // If the bitmap isn't in the cache, try to grab it
           // Or the bitmap was in the cache, but is of no use
           if(bitmap == null || (bitmap!=null && bitmap.isRecycled()) ){
-            bitmap = decodeBitmap(ff, maxWidth, maxHeight);
+
+            if(!url.startsWith("content://")){
+              bitmap = decodeBitmap(ff, maxWidth, maxHeight);
+            }else{
+              Uri uri = Uri.parse(url);
+              try{
+              InputStream input = mContext.getContentResolver().openInputStream(uri);
+              bitmap = BitmapFactory.decodeStream(input);
+              }catch(FileNotFoundException e){
+                if(DEBUG){
+                  e.printStackTrace();
+                }
+              }
+            }
 
             // If we grabbed the image ok, add to the cache
             if(bitmap!=null){
