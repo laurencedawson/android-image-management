@@ -190,7 +190,7 @@ public class ImageManager {
     // Create the image download runnable
     ImageDownloadThread imageDownloadThread = new ImageDownloadThread(){
       public void run() {
-        
+
         // Sleep the request for the specified time
         if(callback!=null && callback.mLoadDelay>0){
           try {
@@ -673,7 +673,7 @@ public class ImageManager {
 
     @Override
     public int compare(Runnable lhs, Runnable rhs) {
-      
+
       if(lhs instanceof ImageDownloadThread && rhs instanceof ImageDownloadThread){
         if(((ImageDownloadThread)lhs).getPriority()>((ImageDownloadThread)rhs).getPriority()){
           return -1;
@@ -681,7 +681,7 @@ public class ImageManager {
           return 1;
         } 
       }
-      
+
       return 0;
     }  
 
