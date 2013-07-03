@@ -25,9 +25,12 @@ import java.net.HttpURLConnection;
 import java.net.URL;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
+import java.util.Comparator;
 import java.util.Date;
 import java.util.concurrent.ExecutorService;
-import java.util.concurrent.Executors;
+import java.util.concurrent.PriorityBlockingQueue;
+import java.util.concurrent.ThreadPoolExecutor;
+import java.util.concurrent.TimeUnit;
 
 import android.annotation.SuppressLint;
 import android.content.Context;
@@ -42,6 +45,7 @@ public class ImageManager {
 
   public static final boolean DEBUG = false;
 
+  public static final int INITIAL_QUEUE_SIZE = 20;
   public static final int LONG_DELAY = 160;
   public static final int SHORT_DELAY = 80;
   public static final int LONG_CONNECTION_TIMEOUT = 10000;
@@ -55,6 +59,9 @@ public class ImageManager {
   private Context mContext;
   private final LruCache<String, Bitmap> mBitmapCache;
   private final ExecutorService mThreadPool[];
+
+  // Inspired by Volley, only allow one thread to decode a bitmap
+  private static final Object sDecodeLock = new Object();
 
   /**
    * Initialize a newly created ImageManager
@@ -70,7 +77,15 @@ public class ImageManager {
     // Create a new individal pool for each thread
     mThreadPool =  new ExecutorService[threads];
     for(int i=0;i<threads;i++){
-      mThreadPool[i] = Executors.newSingleThreadExecutor();
+
+      // Based upon:
+      // http://stackoverflow.com/questions/7792767/priority-threadpoolexecutor-in-java-android
+      // Created a thread pool with a single thread backed by a priority queue,
+      // this allows threads with higher priorities to jump up the queue. Great
+      // for poor connections and background image caching
+      mThreadPool[i] = 
+          new ThreadPoolExecutor(1, 1, Long.MAX_VALUE, TimeUnit.SECONDS, 
+              new PriorityBlockingQueue<Runnable>(INITIAL_QUEUE_SIZE,new ImageThreadComparator()));
     }
 
     // Calculate the cache size
@@ -172,10 +187,10 @@ public class ImageManager {
     // Decide which pool to execute in
     int pool = Math.abs(url.hashCode()) % mThreadPool.length;
 
-    mThreadPool[pool].execute(new Runnable() {
-      @Override
+    // Create the image download runnable
+    ImageDownloadThread imageDownloadThread = new ImageDownloadThread(){
       public void run() {
-
+        
         // Sleep the request for the specified time
         if(callback!=null && callback.mLoadDelay>0){
           try {
@@ -240,8 +255,8 @@ public class ImageManager {
             }else{
               Uri uri = Uri.parse(url);
               try{
-              InputStream input = mContext.getContentResolver().openInputStream(uri);
-              bitmap = BitmapFactory.decodeStream(input);
+                InputStream input = mContext.getContentResolver().openInputStream(uri);
+                bitmap = BitmapFactory.decodeStream(input);
               }catch(FileNotFoundException e){
                 if(DEBUG){
                   e.printStackTrace();
@@ -259,10 +274,25 @@ public class ImageManager {
           if(callback!=null){
             callback.sendCallback(url, bitmap);
           }
+
         }
       }
-    });
+    };
+
+    // Assign a priority to the request
+    if(callback.mImageListener==null){
+      // If there is no image listener, assign it background priority
+      imageDownloadThread.setPriority(BACKGROUND_PRIORITY);
+    }else{
+      // If there is an image listener, assign it UI priority
+      imageDownloadThread.setPriority(UI_PRIORITY);
+    }
+
+    mThreadPool[pool].execute(imageDownloadThread);
   }
+
+  public static final int UI_PRIORITY = 1;
+  public static final int BACKGROUND_PRIORITY = 0;
 
   /**
    * Grab and save an image directly to disk
@@ -435,31 +465,35 @@ public class ImageManager {
   @SuppressLint("NewApi")
   public static Bitmap decodeBitmap(File file, int reqWidth, int reqHeight) {
 
-    // Check if the file doesn't exist or has no content
-    if(!file.exists() || (file.exists() && file.length()==0) ){
-      return null;
+    // Serialize all decode on a global lock to reduce concurrent heap usage.
+    synchronized (sDecodeLock) {
+
+      // Check if the file doesn't exist or has no content
+      if(!file.exists() || (file.exists() && file.length()==0) ){
+        return null;
+      }
+
+      // Load a scaled version of the bitmap
+      Options opts = null;
+      opts = getOptions(file,reqWidth,reqHeight);
+
+      // Set a few additional options for the bitmap opts
+      opts.inPurgeable = true;
+      opts.inInputShareable = true;
+      opts.inDither = true;
+
+      // Grab the bitmap
+      Bitmap bitmap = BitmapFactory.decodeFile(file.getPath(), opts);
+
+      // If on JellyBean attempt to draw with mipmaps enabled
+      if(bitmap!=null && 
+          Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1){
+        bitmap.setHasMipMap(true);
+      }
+
+      // return the decoded bitmap
+      return bitmap;
     }
-
-    // Load a scaled version of the bitmap
-    Options opts = null;
-    opts = getOptions(file,reqWidth,reqHeight);
-
-    // Set a few additional options for the bitmap opts
-    opts.inPurgeable = true;
-    opts.inInputShareable = true;
-    opts.inDither = true;
-
-    // Grab the bitmap
-    Bitmap bitmap = BitmapFactory.decodeFile(file.getPath(), opts);
-
-    // If on JellyBean attempt to draw with mipmaps enabled
-    if(bitmap!=null && 
-        Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1){
-      bitmap.setHasMipMap(true);
-    }
-
-    // return the decoded bitmap
-    return bitmap;
   }
 
   /**
@@ -627,5 +661,52 @@ public class ImageManager {
         e.printStackTrace();
       }
     }
-  }  
+  }
+
+  /**
+   * A simple comparator which favours ImageDownloadThreads with higher 
+   * priorities (such as UI requests over background requests)
+   * @author Laurence Dawson
+   *
+   */
+  class ImageThreadComparator implements Comparator<Runnable>{
+
+    @Override
+    public int compare(Runnable lhs, Runnable rhs) {
+      
+      if(lhs instanceof ImageDownloadThread && rhs instanceof ImageDownloadThread){
+        if(((ImageDownloadThread)lhs).getPriority()>((ImageDownloadThread)rhs).getPriority()){
+          return -1;
+        } else if(((ImageDownloadThread)lhs).getPriority()<((ImageDownloadThread)rhs).getPriority()){
+          return 1;
+        } 
+      }
+      
+      return 0;
+    }  
+
+  }
+
+  /**
+   * A simple Runnable object that can be given a priority, to be used with
+   * ImageThreadComparator and PriorityBlockingQueue
+   * @author Laurence Dawson
+   *
+   */
+  class ImageDownloadThread implements Runnable{      
+    private int priority;       
+
+    @Override
+    public void run() {
+      // To be overridden
+    }
+
+    public int getPriority() {
+      return priority;
+    }
+
+    public void setPriority(int priority) {
+      this.priority = priority;
+    }       
+  }
 }
