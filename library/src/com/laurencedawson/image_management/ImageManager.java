@@ -744,9 +744,9 @@ public class ImageManager {
 
         // Favour a lower creation time
         else if(((ImageDownloadThread)lhs).getCreated()>((ImageDownloadThread)rhs).getCreated()){
-          return -1;
-        }else if(((ImageDownloadThread)lhs).getCreated()<((ImageDownloadThread)rhs).getCreated()){
           return 1;
+        }else if(((ImageDownloadThread)lhs).getCreated()<((ImageDownloadThread)rhs).getCreated()){
+          return -1;
         }
       }
 
