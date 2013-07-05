@@ -24,9 +24,9 @@ import android.graphics.Bitmap;
 import android.os.Bundle;
 import android.widget.ImageView;
 
-import com.laurencedawson.image_management.ImageCallback;
 import com.laurencedawson.image_management.ImageListener;
 import com.laurencedawson.image_management.ImageManager;
+import com.laurencedawson.image_management.ImageRequest;
 
 public class MainActivity extends Activity {
 
@@ -53,21 +53,19 @@ public class MainActivity extends Activity {
   private void setupImage(){
     ImageManager mImageManager = ((CustomApplication)getApplicationContext()).getImageManager();
 
-    mImageManager.requestImage("http://upload.wikimedia.org/wikipedia/commons/c/c5/Anthochaera_chrysoptera.jpg", 
-        new ImageCallback(MainActivity.this, true, new ImageListener(){
-          @Override
-          public void onReceive(String url, Bitmap bitmap) {
-            mImageViewLeft.setImageBitmap(bitmap);
-          }
-        }));
+    mImageManager.requestImage(new ImageRequest("http://upload.wikimedia.org/wikipedia/commons/c/c5/Anthochaera_chrysoptera.jpg", MainActivity.this, true, new ImageListener(){
+      @Override
+      public void onReceive(String url, Bitmap bitmap) {
+        mImageViewLeft.setImageBitmap(bitmap);
+      }
+    }));
 
-    mImageManager.requestImage("http://upload.wikimedia.org/wikipedia/commons/f/f9/Water_Dolphin.jpg", 
-        new ImageCallback(MainActivity.this, true, new ImageListener(){
-          @Override
-          public void onReceive(String url, Bitmap bitmap) {
-            mImageViewRight.setImageBitmap(bitmap);
-          }
-        }));
+    mImageManager.requestImage(new ImageRequest("http://upload.wikimedia.org/wikipedia/commons/f/f9/Water_Dolphin.jpg", MainActivity.this, true, new ImageListener(){
+      @Override
+      public void onReceive(String url, Bitmap bitmap) {
+        mImageViewRight.setImageBitmap(bitmap);
+      }
+    }));
   }
 
 }

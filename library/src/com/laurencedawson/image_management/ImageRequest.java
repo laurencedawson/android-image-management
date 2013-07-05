@@ -21,14 +21,16 @@ import android.app.Activity;
 import android.content.Context;
 import android.graphics.Bitmap;
 
-public class ImageCallback{
+public class ImageRequest{
 
   public Context mContext;
+  public String mUrl;
   public ImageListener mImageListener;
   public boolean mCacheImage;
   public int mLoadDelay;
   public int mMaxWidth;
   public int mMaxHeight;
+  public long mCreated;
 
   /**
    * Initialize a newly created ImageCallback object
@@ -39,14 +41,16 @@ public class ImageCallback{
    * @param maxHeight The maximum height the image should have
    * @param listener An ImageListener to enable {@link ImageManager} callbacks
    */
-  public ImageCallback( Context context, boolean cache, int delay, int maxWidth,
+  public ImageRequest( String url, Context context, boolean cache, int delay, int maxWidth,
       int maxHeight, ImageListener listener){
+    this.mUrl = url;
     this.mContext = context;
     this.mCacheImage = cache;
     this.mLoadDelay = delay;
     this.mMaxWidth = maxWidth;
     this.mMaxHeight = maxHeight;
     this.mImageListener = listener;
+    this.mCreated = System.currentTimeMillis();
   }
 
   /**
@@ -55,13 +59,15 @@ public class ImageCallback{
    * @param cache Should the image requested be cached in memory
    * @param listener An ImageListener to enable {@link ImageManager} callbacks
    */
-  public ImageCallback( Context context, boolean cache, ImageListener listener){
+  public ImageRequest( String url, Context context, boolean cache, ImageListener listener){
+    this.mUrl = url;
     this.mContext = context;
     this.mCacheImage = cache;
     this.mLoadDelay = ImageManager.NO_DELAY;
     this.mMaxWidth = ImageManager.MAX_WIDTH;
     this.mMaxHeight = ImageManager.MAX_HEIGHT;
     this.mImageListener = listener;
+    this.mCreated = System.currentTimeMillis();
   }
 
   /**

@@ -27,6 +27,8 @@ import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
 import java.util.Comparator;
 import java.util.Date;
+import java.util.concurrent.BlockingQueue;
+import java.util.concurrent.ConcurrentLinkedQueue;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.PriorityBlockingQueue;
 import java.util.concurrent.ThreadPoolExecutor;
@@ -45,7 +47,7 @@ public class ImageManager {
 
   public static final boolean DEBUG = false;
 
-  public static final int INITIAL_QUEUE_SIZE = 20;
+  public static final int INITIAL_QUEUE_SIZE = 30;
   public static final int LONG_DELAY = 160;
   public static final int SHORT_DELAY = 80;
   public static final int LONG_CONNECTION_TIMEOUT = 10000;
@@ -58,10 +60,19 @@ public class ImageManager {
 
   private Context mContext;
   private final LruCache<String, Bitmap> mBitmapCache;
-  private final ExecutorService mThreadPool[];
+  private final ExecutorService mThreadPool;
 
   // Inspired by Volley, only allow one thread to decode a bitmap
   private static final Object sDecodeLock = new Object();
+
+  // Maintain 3 queues for image requests
+  // The first queues requests to be processed immediately by the thread pool 
+  private BlockingQueue<Runnable> mTaskQueue;
+  // The second maintains a queue of active requests
+  private ConcurrentLinkedQueue<Runnable> mActiveTasks;
+  // The third maintains a queue of blocked requests. A request can be blocked
+  // if a duplicate exists in the task or active queue
+  private ConcurrentLinkedQueue<Runnable> mBlockedTasks;
 
   /**
    * Initialize a newly created ImageManager
@@ -71,22 +82,49 @@ public class ImageManager {
    */
   public ImageManager(Context context, int cacheSize, int threads ) {
 
+    // Instantiate the three queues. The task queue uses a custom comparator to 
+    // change the ordering from FIFO (using the internal comparator) to respect
+    // request priorities. If two requests have equal priorities, they are 
+    // sorted according to creation date
+    mTaskQueue =  new PriorityBlockingQueue<Runnable>(INITIAL_QUEUE_SIZE, 
+        new ImageThreadComparator());
+    mActiveTasks = new ConcurrentLinkedQueue<Runnable>();
+    mBlockedTasks = new ConcurrentLinkedQueue<Runnable>();
+
     // The application context
     mContext = context;
 
-    // Create a new individal pool for each thread
-    mThreadPool =  new ExecutorService[threads];
-    for(int i=0;i<threads;i++){
+    // Create a new threadpool using the taskQueue
+    mThreadPool = new ThreadPoolExecutor(threads, threads, 
+        Long.MAX_VALUE, TimeUnit.SECONDS, mTaskQueue){
 
-      // Based upon:
-      // http://stackoverflow.com/questions/7792767/priority-threadpoolexecutor-in-java-android
-      // Created a thread pool with a single thread backed by a priority queue,
-      // this allows threads with higher priorities to jump up the queue. Great
-      // for poor connections and background image caching
-      mThreadPool[i] = 
-          new ThreadPoolExecutor(1, 1, Long.MAX_VALUE, TimeUnit.SECONDS, 
-              new PriorityBlockingQueue<Runnable>(INITIAL_QUEUE_SIZE,new ImageThreadComparator()));
-    }
+
+      @Override
+      protected void beforeExecute(Thread t, Runnable r) {
+        // Before executing a request, place the request on the active queue
+        // This prevents new duplicate requests being placed in the active queue
+        mActiveTasks.add(r);
+        super.beforeExecute(t, r);
+      }
+
+      @Override
+      protected void afterExecute(Runnable r, Throwable t) {
+        // After a request has finished executing, remove the request from
+        // the active queue, this allows new duplicate requests to be submitted
+        mActiveTasks.remove(r);
+
+        // Perform a quick check to see if there are any remaining requests in
+        // the blocked queue. Peek the head and check for duplicates in the 
+        // active and task queues. If no duplicates exist, add the request to
+        // the task queue. Repeat this until a duplicate is found
+        while(mBlockedTasks.peek()!=null && 
+            !mTaskQueue.contains(mBlockedTasks.peek()) && 
+            !mActiveTasks.contains(mBlockedTasks.peek())){
+          mThreadPool.execute(mBlockedTasks.poll());
+        }
+        super.afterExecute(r, t);
+      }
+    };
 
     // Calculate the cache size
     cacheSize = ((int) (Runtime.getRuntime().maxMemory() / 1024)) / cacheSize;
@@ -117,7 +155,7 @@ public class ImageManager {
   /**
    * Remove all images from the LRU cache
    */
-  public void removeAll() {
+  public synchronized void removeAll() {
     mBitmapCache.evictAll();
   }
 
@@ -125,12 +163,21 @@ public class ImageManager {
    * Remove an Image from the LRU cache
    * @param url The URL of the element to remove
    */
-  public void removeEntry(String url){
+  public synchronized void removeEntry(String url){
     if(url==null){
       return;
     }
 
     mBitmapCache.remove(url);
+  }
+
+  /**
+   * Add a bitmap to the cache
+   * @param url URL of the image
+   * @param bitmap The bitmap image
+   */
+  private synchronized void addEntry(String url, Bitmap bitmap){
+    mBitmapCache.put(url, bitmap);
   }
 
   /**
@@ -149,12 +196,13 @@ public class ImageManager {
     return o.outMimeType!=null&&o.outMimeType.equals(ImageManager.gifMime);
   }
 
+
   /**
    * Get a specified image from the cache
    * @param url The URL of the image
    * @return A Bitmap of the image requested
    */
-  public Bitmap get(String url) {
+  public synchronized Bitmap get(String url) {
     if(url==null){
       return null;
     }
@@ -180,21 +228,19 @@ public class ImageManager {
    * Request an image to be downloaded, cached and loaded into the LRU cache.
    * 
    * @param url The URL of the image to grab
-   * @param callback The ImageCallback complete with image options
+   * @param request The ImageRequest complete with image options
    */
-  public void requestImage(final String url, final ImageCallback callback) {
-
-    // Decide which pool to execute in
-    int pool = Math.abs(url.hashCode()) % mThreadPool.length;
+  public void requestImage(final ImageRequest request) {
 
     // Create the image download runnable
     ImageDownloadThread imageDownloadThread = new ImageDownloadThread(){
+
       public void run() {
 
         // Sleep the request for the specified time
-        if(callback!=null && callback.mLoadDelay>0){
+        if(request!=null && request.mLoadDelay>0){
           try {
-            Thread.sleep(callback.mLoadDelay);
+            Thread.sleep(request.mLoadDelay);
           } catch (InterruptedException e){
             if(ImageManager.DEBUG){
               e.printStackTrace();
@@ -205,27 +251,27 @@ public class ImageManager {
         File ff = null;
 
         // If the URL is not a local reseource, grab the file
-        if(!url.startsWith("content://")){
+        if(!getUrl().startsWith("content://")){
 
           // Grab a link to the file
-          ff = new File(getFullCacheFileName(mContext, url));
+          ff = new File(getFullCacheFileName(mContext, getUrl()));
 
           // If the file doesn't exist, grab it from the network
           if (!ff.exists()){
-            cacheImage( ff, url, callback);
+            cacheImage( ff, request);
           } 
 
           // Otherwise let the callback know the image is cached
-          else if(callback!=null){
-            callback.sendCachedCallback(url, true);
+          else if(request!=null){
+            request.sendCachedCallback(getUrl(), true);
           }
 
           // Check if the file is a gif
-          boolean isGif = isGif(url);
+          boolean isGif = isGif(getUrl());
 
           // If the file downloaded was a gif, tell all the callbacks
-          if( isGif && callback!=null ){
-            callback.sendGifCallback(url);
+          if( isGif && request!=null ){
+            request.sendGifCallback(getUrl());
           }
         }
 
@@ -233,27 +279,27 @@ public class ImageManager {
         boolean shouldCache = false;
         int maxWidth = MAX_WIDTH;
         int maxHeight = MAX_HEIGHT;
-        if(callback!=null){
-          maxWidth = callback.mMaxWidth;
-          maxHeight = callback.mMaxHeight;
-          shouldCache = callback.mCacheImage;
+        if(request!=null){
+          maxWidth = request.mMaxWidth;
+          maxHeight = request.mMaxHeight;
+          shouldCache = request.mCacheImage;
         }
 
         // If any of the callbacks request the image should be cached, cache it
         if(shouldCache && 
-            ((callback!=null&&callback.mContext!=null)||callback==null)){
+            ((request!=null&&request.mContext!=null)||request==null)){
 
           // First check the image isn't actually in the cache
-          Bitmap bitmap = mBitmapCache.get(url);
+          Bitmap bitmap = get(getUrl());
 
           // If the bitmap isn't in the cache, try to grab it
           // Or the bitmap was in the cache, but is of no use
-          if(bitmap == null || (bitmap!=null && bitmap.isRecycled()) ){
+          if(bitmap == null){
 
-            if(!url.startsWith("content://")){
+            if(!getUrl().startsWith("content://")){
               bitmap = decodeBitmap(ff, maxWidth, maxHeight);
             }else{
-              Uri uri = Uri.parse(url);
+              Uri uri = Uri.parse(getUrl());
               try{
                 InputStream input = mContext.getContentResolver().openInputStream(uri);
                 bitmap = BitmapFactory.decodeStream(input);
@@ -266,21 +312,26 @@ public class ImageManager {
 
             // If we grabbed the image ok, add to the cache
             if(bitmap!=null){
-              mBitmapCache.put(url, bitmap);
+              addEntry(getUrl(), bitmap);
             }
           }
 
           // Send the cached callback
-          if(callback!=null){
-            callback.sendCallback(url, bitmap);
+          if(request!=null){
+            request.sendCallback(getUrl(), bitmap);
           }
-
         }
       }
     };
 
+    // Set the url of the request
+    imageDownloadThread.setUrl(request.mUrl);
+
+    // Set the creation time of the request
+    imageDownloadThread.setCreated(request.mCreated);
+
     // Assign a priority to the request
-    if(callback.mImageListener==null){
+    if(request.mImageListener==null){
       // If there is no image listener, assign it background priority
       imageDownloadThread.setPriority(BACKGROUND_PRIORITY);
     }else{
@@ -288,7 +339,17 @@ public class ImageManager {
       imageDownloadThread.setPriority(UI_PRIORITY);
     }
 
-    mThreadPool[pool].execute(imageDownloadThread);
+    // If the new request is not a duplicate of an entry of the active and 
+    // task queues, add the request to the task queue
+    if(!mTaskQueue.contains(imageDownloadThread) && 
+        !mActiveTasks.contains(imageDownloadThread)){
+      mThreadPool.execute(imageDownloadThread);
+    }
+
+    // If the request is a duplicate, add it to the blocked tasks queue
+    else{
+      mBlockedTasks.add(imageDownloadThread);
+    }
   }
 
   public static final int UI_PRIORITY = 1;
@@ -300,8 +361,7 @@ public class ImageManager {
    * @param url The URL of the image
    * @param imageCallback The callback associated with the request
    */
-  public static void cacheImage(final File file, final String url, 
-      ImageCallback imageCallback) {
+  public static void cacheImage(final File file, ImageRequest imageCallback) {
 
     HttpURLConnection urlConnection = null;
     FileOutputStream fileOutputStream = null;
@@ -310,7 +370,7 @@ public class ImageManager {
 
     try{
       // Setup the connection
-      urlConnection = (HttpURLConnection) new URL(url).openConnection();
+      urlConnection = (HttpURLConnection) new URL(imageCallback.mUrl).openConnection();
       urlConnection.setConnectTimeout(ImageManager.LONG_CONNECTION_TIMEOUT);
       urlConnection.setReadTimeout(ImageManager.LONG_REQUEST_TIMEOUT);
       urlConnection.setUseCaches(true);
@@ -372,8 +432,8 @@ public class ImageManager {
                 fileOutputStream.close();
 
                 if(imageCallback!=null){
-                  imageCallback.sendProgressUpdate(url, 100);
-                  imageCallback.sendCachedCallback(url, true);
+                  imageCallback.sendProgressUpdate(imageCallback.mUrl, 100);
+                  imageCallback.sendCachedCallback(imageCallback.mUrl, true);
                 }
 
                 urlConnection.disconnect();
@@ -391,7 +451,7 @@ public class ImageManager {
         // Update the callback with the current progress
         if(imageCallback!=null){
           if(length>0){
-            imageCallback.sendProgressUpdate(url, 
+            imageCallback.sendProgressUpdate(imageCallback.mUrl, 
                 (int) (((float)totalRead/(float)length)*100) );
           }
         }
@@ -404,7 +464,7 @@ public class ImageManager {
 
       // Sent the callback that the image has been downloaded
       if(imageCallback!=null){
-        imageCallback.sendCachedCallback(url, true);
+        imageCallback.sendCachedCallback(imageCallback.mUrl, true);
       }
 
       if (inputStream != null){
@@ -675,11 +735,19 @@ public class ImageManager {
     public int compare(Runnable lhs, Runnable rhs) {
 
       if(lhs instanceof ImageDownloadThread && rhs instanceof ImageDownloadThread){
+        // Favour a higher priority
         if(((ImageDownloadThread)lhs).getPriority()>((ImageDownloadThread)rhs).getPriority()){
           return -1;
         } else if(((ImageDownloadThread)lhs).getPriority()<((ImageDownloadThread)rhs).getPriority()){
           return 1;
         } 
+
+        // Favour a lower creation time
+        else if(((ImageDownloadThread)lhs).getCreated()>((ImageDownloadThread)rhs).getCreated()){
+          return -1;
+        }else if(((ImageDownloadThread)lhs).getCreated()<((ImageDownloadThread)rhs).getCreated()){
+          return 1;
+        }
       }
 
       return 0;
@@ -695,6 +763,9 @@ public class ImageManager {
    */
   class ImageDownloadThread implements Runnable{      
     private int priority;       
+    private String url;
+    private long created;
+
 
     @Override
     public void run() {
@@ -707,6 +778,32 @@ public class ImageManager {
 
     public void setPriority(int priority) {
       this.priority = priority;
-    }       
+    }
+
+    public String getUrl(){
+      return url;
+    }
+
+    public void setUrl(String url){
+      this.url = url;
+    }
+
+    public long getCreated(){
+      return created;
+    }
+
+    public void setCreated(long created){
+      this.created = created;
+    }
+
+    @Override
+    public boolean equals(Object o) {
+      if(o instanceof ImageDownloadThread){
+        if(((ImageDownloadThread)o).getUrl().equals(getUrl())){
+          return true;
+        }
+      }
+      return super.equals(o);
+    }
   }
 }
