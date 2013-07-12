@@ -41,8 +41,9 @@ public class ImageRequest{
    * @param maxHeight The maximum height the image should have
    * @param listener An ImageListener to enable {@link ImageManager} callbacks
    */
-  public ImageRequest( String url, Context context, boolean cache, int delay, int maxWidth,
-      int maxHeight, ImageListener listener){
+  public ImageRequest( final String url, final Context context, 
+      final boolean cache, final int delay, final int maxWidth,
+      final int maxHeight, final ImageListener listener){
     this.mUrl = url;
     this.mContext = context;
     this.mCacheImage = cache;
@@ -59,7 +60,8 @@ public class ImageRequest{
    * @param cache Should the image requested be cached in memory
    * @param listener An ImageListener to enable {@link ImageManager} callbacks
    */
-  public ImageRequest( String url, Context context, boolean cache, ImageListener listener){
+  public ImageRequest( final String url, final Context context, 
+      final boolean cache, final ImageListener listener){
     this.mUrl = url;
     this.mContext = context;
     this.mCacheImage = cache;

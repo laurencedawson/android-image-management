@@ -38,58 +38,60 @@ import android.view.View;
  */
 public class SimpleImageView extends View {
 
-  private Bitmap bm;
-  private Matrix m;
-  private Paint p;
+  private Bitmap mBitmap;
+  private final Matrix mMatrix;
+  private final Paint mPaint;
   private boolean mInvalidate;
 
-  public SimpleImageView(Context context, AttributeSet attrs) {
+  public SimpleImageView(final Context context, final AttributeSet attrs) {
     super(context, attrs);
-    m = new Matrix();
-    p = new Paint();
-    p.setFilterBitmap(true);
+    mMatrix = new Matrix();
+    mPaint = new Paint();
+    mPaint.setFilterBitmap(true);
   }
 
   @Override
-  protected void onLayout(boolean changed, int left, int top, int right, int bottom) {
+  protected void onLayout(final boolean changed, final int left, final int top, 
+      final int right, final int bottom) {
     // Nah
   }
 
-  public void setImageBitmap(Bitmap bm) {
-    this.bm = bm;
+  public void setImageBitmap(final Bitmap bitmap) {
+    this.mBitmap = bitmap;
     mInvalidate = true;
     postInvalidate();
   }
 
   public Bitmap getImageBitmap(){
-    return this.bm;
+    return this.mBitmap;
   }
 
   @Override
-  protected void onDraw(Canvas canvas) {
-    if(bm!=null){
+  protected void onDraw(final Canvas canvas) {
+    if(mBitmap!=null){
       if(mInvalidate){
-        float fw = (float)getActualWidth()/(float)bm.getWidth();
-        float fh = (float)getActualHeight()/(float)bm.getHeight();
-        float ratio = Math.min(fw, fh);
+        final float widthRatio = (float)getActualWidth()/(float)mBitmap.getWidth();
+        final float heightRatio = (float)getActualHeight()/(float)mBitmap.getHeight();
+        final float ratio = Math.min(widthRatio, heightRatio);
 
-        m.reset();
-        m.postScale(ratio, ratio);
-        m.postTranslate((getWidth()-(ratio*bm.getWidth()))/2, (getHeight()-(ratio*bm.getHeight()))/2);
+        mMatrix.reset();
+        mMatrix.postScale(ratio, ratio);
+        mMatrix.postTranslate(getWidth()-(ratio*mBitmap.getWidth())/2,
+            getHeight()-(ratio*mBitmap.getHeight())/2);
         mInvalidate = false;
       }
 
-      canvas.drawBitmap(bm, m, p );
+      canvas.drawBitmap(mBitmap, mMatrix, mPaint );
     }
   }
 
 
   public int getActualWidth(){
-    return getWidth()-(getPaddingLeft()+getPaddingRight());
+    return getWidth()-getPaddingLeft()+getPaddingRight();
   }
 
   public int getActualHeight(){
-    return getHeight()-(getPaddingTop()+getPaddingBottom());
+    return getHeight()-getPaddingTop()+getPaddingBottom();
   }
 
 }

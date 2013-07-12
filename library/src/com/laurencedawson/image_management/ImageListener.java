@@ -21,14 +21,14 @@ import android.graphics.Bitmap;
 
 public class ImageListener{
   // The requested image was a gif
-  public void onGif( String url ){}
+  public void onGif( final String url ){}
 
   // The requested image has been cached
-  public void onCached ( String url, boolean status ){}
+  public void onCached ( final String url, final boolean status ){}
 
   // The request image has been cached and loaded into memory
-  public void onReceive( String url, Bitmap bitmap ){}
+  public void onReceive( final String url, final Bitmap bitmap ){}
 
   // The request image download progress
-  public void onUpdate( String url, int progress ){}
+  public void onUpdate( final String url, final int progress ){}
 }
