@@ -20,3 +20,7 @@ gen/
 # Eclipse
 .settings
 .classpath
+
+# PMD
+.pmd
+reports/
