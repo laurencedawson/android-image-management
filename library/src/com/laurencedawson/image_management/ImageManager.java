@@ -44,6 +44,7 @@ import android.graphics.BitmapFactory.Options;
 import android.net.Uri;
 import android.os.Build;
 import android.support.v4.util.LruCache;
+import android.webkit.MimeTypeMap;
 
 public class ImageManager {
 
@@ -199,12 +200,27 @@ public class ImageManager {
     if(url==null){
       return false;
     }
-
+    
+    // First try to grab the mime from the options
     Options options = new Options();
     options.inJustDecodeBounds = true;
     BitmapFactory.decodeFile(getFullCacheFileName(mContext, url), options);
-    return options.outMimeType!=null && 
-        options.outMimeType.equals(ImageManager.GIF_MIME);
+    if(options.outMimeType!=null && 
+        options.outMimeType.equals(ImageManager.GIF_MIME)){
+      return true;
+    }
+    
+    // Next, try to grab the mime type from the url
+    final String extension = MimeTypeMap.getFileExtensionFromUrl(url);
+    if(extension!=null){
+      String mimeType = 
+          MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension);
+      if(mimeType!=null){
+        return mimeType.equals(ImageManager.GIF_MIME);
+      }
+    }
+   
+    return false;
   }
 
 
@@ -414,7 +430,7 @@ public class ImageManager {
           e.printStackTrace();
         }
       }
-
+      
       // Write the input stream to disk
       fileOutputStream = new FileOutputStream(file, true);
       int byteRead = 0;

@@ -70,14 +70,14 @@ public class SimpleImageView extends View {
   protected void onDraw(final Canvas canvas) {
     if(mBitmap!=null){
       if(mInvalidate){
-        final float widthRatio = (float)getActualWidth()/(float)mBitmap.getWidth();
-        final float heightRatio = (float)getActualHeight()/(float)mBitmap.getHeight();
-        final float ratio = Math.min(widthRatio, heightRatio);
+        float fw = (float)getActualWidth()/(float)mBitmap.getWidth();
+        float fh = (float)getActualHeight()/(float)mBitmap.getHeight();
+        float ratio = Math.min(fw, fh);
 
         mMatrix.reset();
         mMatrix.postScale(ratio, ratio);
-        mMatrix.postTranslate(getWidth()-(ratio*mBitmap.getWidth())/2,
-            getHeight()-(ratio*mBitmap.getHeight())/2);
+        mMatrix.postTranslate((getWidth()-(ratio*mBitmap.getWidth()))/2,
+            (getHeight()-(ratio*mBitmap.getHeight()))/2);
         mInvalidate = false;
       }
 
@@ -85,13 +85,11 @@ public class SimpleImageView extends View {
     }
   }
 
-
   public int getActualWidth(){
-    return getWidth()-getPaddingLeft()+getPaddingRight();
+    return getWidth()-(getPaddingLeft()+getPaddingRight());
   }
 
   public int getActualHeight(){
-    return getHeight()-getPaddingTop()+getPaddingBottom();
+    return getHeight()-(getPaddingTop()+getPaddingBottom());
   }
-
 }
