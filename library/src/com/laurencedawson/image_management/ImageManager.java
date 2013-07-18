@@ -142,23 +142,13 @@ public class ImageManager {
 
     // Create the LRU cache
     // http://developer.android.com/reference/android/util/LruCache.html
+    
+    // The items are no longer recycled as they leave the cache, turns out this wasn't the right
+    // way to go about this and often resulted in recycled bitmaps being drawn
+    // http://stackoverflow.com/questions/10743381/when-should-i-recycle-a-bitmap-using-lrucache
     mBitmapCache = new LruCache<String, Bitmap>(actualCacheSize){
       protected int sizeOf(final String key, final Bitmap value) {
         return value.getByteCount() / 1024;
-      }
-
-      @Override
-      protected void entryRemoved(final boolean evicted, final String key, 
-          final Bitmap oldValue, final Bitmap newValue) {
-        if (oldValue != null){
-          oldValue.recycle();
-        }
-
-        if (newValue != null){
-          newValue.recycle();
-        }
-
-        super.entryRemoved(evicted, key, oldValue, newValue);
       }
     };
   }
@@ -258,6 +248,11 @@ public class ImageManager {
    * @param request The ImageRequest complete with image options
    */
   public void requestImage(final ImageRequest request) {
+    
+    // If the request has no URL, abandon it
+    if(request.mUrl==null){
+      return;
+    }
 
     // Create the image download runnable
     final ImageDownloadThread imageDownloadThread = new ImageDownloadThread(){
@@ -805,6 +800,14 @@ class ImageDownloadThread implements Runnable{
 
   @Override
   public boolean equals(final Object o) {
+    if(getUrl()==null){
+      return false;
+    }
+    
+    if(o==null){
+      return false;
+    }
+    
     if(o instanceof ImageDownloadThread &&
         ((ImageDownloadThread)o).getUrl().equals(getUrl())){
         return true;
