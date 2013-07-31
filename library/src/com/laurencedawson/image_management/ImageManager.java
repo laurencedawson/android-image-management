@@ -55,13 +55,13 @@ public class ImageManager {
   public static final int LONG_DELAY = 160;
   public static final int SHORT_DELAY = 80;
   public static final int NO_DELAY = 0;
-  
+
   public static final int LONG_CONNECTION_TIMEOUT = 10000;
   public static final int LONG_REQUEST_TIMEOUT = 10000;
-  
+
   public static final int MAX_WIDTH = 480;
   public static final int MAX_HEIGHT = 720;
-  
+
   public static final int UI_PRIORITY = 1;
   public static final int BACKGROUND_PRIORITY = 0;
 
@@ -127,10 +127,15 @@ public class ImageManager {
         // the blocked queue. Peek the head and check for duplicates in the 
         // active and task queues. If no duplicates exist, add the request to
         // the task queue. Repeat this until a duplicate is found
-        while(mBlockedTasks.peek()!=null && 
-            !mTaskQueue.contains(mBlockedTasks.peek()) && 
-            !mActiveTasks.contains(mBlockedTasks.peek())){
-          mThreadPool.execute(mBlockedTasks.poll());
+        synchronized (mBlockedTasks) {
+          while(mBlockedTasks.peek()!=null && 
+              !mTaskQueue.contains(mBlockedTasks.peek()) && 
+              !mActiveTasks.contains(mBlockedTasks.peek())){
+            Runnable runnable = mBlockedTasks.poll();
+            if(runnable!=null){
+              mThreadPool.execute(runnable);
+            }
+          }
         }
         super.afterExecute(r, t);
       }
@@ -142,7 +147,7 @@ public class ImageManager {
 
     // Create the LRU cache
     // http://developer.android.com/reference/android/util/LruCache.html
-    
+
     // The items are no longer recycled as they leave the cache, turns out this wasn't the right
     // way to go about this and often resulted in recycled bitmaps being drawn
     // http://stackoverflow.com/questions/10743381/when-should-i-recycle-a-bitmap-using-lrucache
@@ -157,7 +162,9 @@ public class ImageManager {
    * Remove all images from the LRU cache
    */
   public void removeAll() {
-    mBitmapCache.evictAll();
+    synchronized (mBitmapCache) {
+      mBitmapCache.evictAll();
+    }
   }
 
   /**
@@ -169,7 +176,9 @@ public class ImageManager {
       return;
     }
 
-    mBitmapCache.remove(url);
+    synchronized (mBitmapCache) {
+      mBitmapCache.remove(url);
+    }
   }
 
   /**
@@ -178,7 +187,16 @@ public class ImageManager {
    * @param bitmap The bitmap image
    */
   private void addEntry(final String url, final Bitmap bitmap){
-    mBitmapCache.put(url, bitmap);
+
+    if(url == null || bitmap == null){
+      return;
+    }
+
+    synchronized (mBitmapCache) {
+      if(mBitmapCache.get(url) == null){
+        mBitmapCache.put(url, bitmap);
+      }
+    }
   }
 
   /**
@@ -190,7 +208,7 @@ public class ImageManager {
     if(url==null){
       return false;
     }
-    
+
     // First try to grab the mime from the options
     Options options = new Options();
     options.inJustDecodeBounds = true;
@@ -199,7 +217,7 @@ public class ImageManager {
         options.outMimeType.equals(ImageManager.GIF_MIME)){
       return true;
     }
-    
+
     // Next, try to grab the mime type from the url
     final String extension = MimeTypeMap.getFileExtensionFromUrl(url);
     if(extension!=null){
@@ -209,7 +227,7 @@ public class ImageManager {
         return mimeType.equals(ImageManager.GIF_MIME);
       }
     }
-   
+
     return false;
   }
 
@@ -220,21 +238,16 @@ public class ImageManager {
    * @return A Bitmap of the image requested
    */
   public Bitmap get(String url) {
-    if(url==null){
-      return null;
-    }
+    if(url!=null){
+      synchronized (mBitmapCache) {
 
-    // Get the image from the cache
-    final Bitmap bitmap = mBitmapCache.get(url);
+        // Get the image from the cache
+        final Bitmap bitmap = mBitmapCache.get(url);
 
-    // Check if the bitmap is in the cache
-    if (bitmap != null) {
-      // If it hasn't been recycled return it
-      if (!bitmap.isRecycled()){
-        return bitmap;
-      } else{
-        // Otherwise remove it and return null
-        removeEntry(url);
+        // Check if the bitmap is in the cache
+        if (bitmap != null) {
+          return bitmap;
+        }
       }
     }
 
@@ -248,7 +261,7 @@ public class ImageManager {
    * @param request The ImageRequest complete with image options
    */
   public void requestImage(final ImageRequest request) {
-    
+
     // If the request has no URL, abandon it
     if(request.mUrl==null){
       return;
@@ -325,7 +338,12 @@ public class ImageManager {
               try{
                 InputStream input = mContext.getContentResolver().openInputStream(uri);
                 bitmap = BitmapFactory.decodeStream(input);
+                input.close();
               }catch(FileNotFoundException e){
+                if(DEBUG){
+                  e.printStackTrace();
+                }
+              }catch(IOException e){
                 if(DEBUG){
                   e.printStackTrace();
                 }
@@ -425,7 +443,7 @@ public class ImageManager {
           e.printStackTrace();
         }
       }
-      
+
       // Write the input stream to disk
       fileOutputStream = new FileOutputStream(file, true);
       int byteRead = 0;
@@ -803,14 +821,14 @@ class ImageDownloadThread implements Runnable{
     if(getUrl()==null){
       return false;
     }
-    
+
     if(o==null){
       return false;
     }
-    
+
     if(o instanceof ImageDownloadThread &&
         ((ImageDownloadThread)o).getUrl().equals(getUrl())){
-        return true;
+      return true;
     }
     return super.equals(o);
   }
