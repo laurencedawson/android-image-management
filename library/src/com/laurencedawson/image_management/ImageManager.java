@@ -46,7 +46,7 @@ import android.webkit.MimeTypeMap;
 
 public class ImageManager {
 
-  public static final boolean DEBUG = false;
+  public static final boolean DEBUG = true;
 
   public static final int QUEUE_SIZE = 30;
 
@@ -328,7 +328,11 @@ public class ImageManager {
           // If the bitmap isn't in the cache, try to grab it
           // Or the bitmap was in the cache, but is of no use
           if(bitmap == null){
-            bitmap = decodeBitmap(getUrl(), maxWidth, maxHeight);
+            if(!getUrl().startsWith("content://")){
+              bitmap = decodeBitmap(file.getPath(), maxWidth, maxHeight);
+            }else{
+              bitmap = decodeBitmap(getUrl(), maxWidth, maxHeight);
+            }
 
             // If we grabbed the image ok, add to the cache
             if(bitmap!=null){
