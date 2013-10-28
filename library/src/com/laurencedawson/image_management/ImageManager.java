@@ -18,7 +18,6 @@
 package com.laurencedawson.image_management;
 
 import java.io.File;
-import java.io.FileNotFoundException;
 import java.io.FileOutputStream;
 import java.io.IOException;
 import java.io.InputStream;
@@ -42,8 +41,7 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.BitmapFactory.Options;
 import android.net.Uri;
-import android.os.Build;
-import android.support.v4.util.LruCache;
+import android.util.LruCache;
 import android.webkit.MimeTypeMap;
 
 public class ImageManager {
@@ -123,14 +121,14 @@ public class ImageManager {
         // the active queue, this allows new duplicate requests to be submitted
         mActiveTasks.remove(r);
 
+
         // Perform a quick check to see if there are any remaining requests in
         // the blocked queue. Peek the head and check for duplicates in the 
-        // active and task queues. If no duplicates exist, add the request to
-        // the task queue. Repeat this until a duplicate is found
+        // active queues. If no duplicates exist, execute the request straight away.
+        // Repeat this until a duplicate is found
         synchronized (mBlockedTasks) {
-          while(mBlockedTasks.peek()!=null && 
-              !mTaskQueue.contains(mBlockedTasks.peek()) && 
-              !mActiveTasks.contains(mBlockedTasks.peek())){
+          while(mBlockedTasks.peek()!=null && !mActiveTasks.contains(mBlockedTasks.peek())){
+            // !mTaskQueue.contains(mBlockedTasks.peek()) &&
             Runnable runnable = mBlockedTasks.poll();
             if(runnable!=null){
               mThreadPool.execute(runnable);
@@ -330,25 +328,7 @@ public class ImageManager {
           // If the bitmap isn't in the cache, try to grab it
           // Or the bitmap was in the cache, but is of no use
           if(bitmap == null){
-
-            if(!getUrl().startsWith("content://")){
-              bitmap = decodeBitmap(file, maxWidth, maxHeight);
-            }else{
-              Uri uri = Uri.parse(getUrl());
-              try{
-                InputStream input = mContext.getContentResolver().openInputStream(uri);
-                bitmap = BitmapFactory.decodeStream(input);
-                input.close();
-              }catch(FileNotFoundException e){
-                if(DEBUG){
-                  e.printStackTrace();
-                }
-              }catch(IOException e){
-                if(DEBUG){
-                  e.printStackTrace();
-                }
-              }
-            }
+            bitmap = decodeBitmap(getUrl(), maxWidth, maxHeight);
 
             // If we grabbed the image ok, add to the cache
             if(bitmap!=null){
@@ -520,58 +500,55 @@ public class ImageManager {
       if (file != null){
         file.delete();
       }
-
     }
-
-  }
-
-  /**
-   * Decode a Bitmap with the default max width and height
-   * @param file The Bitmap file
-   * @return The Bitmap image
-   */
-  public static Bitmap decodeBitmap(final File file){
-    return decodeBitmap(file, ImageManager.MAX_WIDTH, ImageManager.MAX_WIDTH);
   }
 
   /**
    * Decode a Bitmap with a given max width and height
-   * @param file The Bitmap file
+   * @param filename The image path
    * @param reqWidth The requested width of the resulting bitmap
    * @param reqHeight The requested height of the resulting bitmap
    * @return The Bitmap image
    */
   @SuppressLint("NewApi")
-  public static Bitmap decodeBitmap(final File file, final int reqWidth, 
-      final int reqHeight) {
+  private Bitmap decodeBitmap(final String filename, final int reqWidth, final int reqHeight) {
 
     // Serialize all decode on a global lock to reduce concurrent heap usage.
     synchronized (DECODE_LOCK) {
 
-      // Check if the file doesn't exist or has no content
-      if(!file.exists() || file.exists() && file.length()==0 ){
-        return null;
-      }
-
       // Load a scaled version of the bitmap
       Options opts = null;
-      opts = getOptions(file,reqWidth,reqHeight);
+      Bitmap bitmap = null;
+      try{
+        // Handle the bitmap as a file
+        if(!filename.startsWith("content://")){
+          File file = new File(filename);
+          // Check if the file doesn't exist or has no content
+          if(!file.exists() || file.exists() && file.length()==0 ){
+            return null;
+          }
+          opts = getOptions(file,reqWidth,reqHeight);
+          bitmap = BitmapFactory.decodeFile(file.getPath(), opts);
+        }
 
-      // Set a few additional options for the bitmap opts
-      opts.inPurgeable = true;
-      opts.inInputShareable = true;
-      opts.inDither = true;
+        // Handle the bitmap as a stream 
+        else{
+          Uri uri = Uri.parse(filename);
 
-      // Grab the bitmap
-      Bitmap bitmap = BitmapFactory.decodeFile(file.getPath(), opts);
+          // Grab the bitmap options
+          opts = getOptions(uri, reqWidth, reqHeight);
+          bitmap = BitmapFactory.decodeStream(
+              mContext.getContentResolver().openInputStream(uri), null, opts);
+        }
 
-      // If on JellyBean attempt to draw with mipmaps enabled
-      if(bitmap!=null && 
-          Build.VERSION.SDK_INT >= Build.VERSION_CODES.JELLY_BEAN_MR1){
-        bitmap.setHasMipMap(true);
+        // return the decoded bitmap
+        return bitmap;
+
+      }catch(IOException e){
+        if(DEBUG){
+          e.printStackTrace();
+        }
       }
-
-      // return the decoded bitmap
       return bitmap;
     }
   }
@@ -585,40 +562,66 @@ public class ImageManager {
    * @param reqHeight The requested height of the resulting bitmap
    * @return The options to be used for loading bitmaps
    */
-  public static Options getOptions(final File file, final int reqWidth, 
-      final int reqHeight) {
+  private Options getOptions(final File file, final int reqWidth, final int reqHeight){
     BitmapFactory.Options options = new Options();
     options.inJustDecodeBounds = true;
     BitmapFactory.decodeFile(file.getPath(), options);
-    options.inJustDecodeBounds = false;
+    return getOptionsInner(options, reqWidth, reqHeight);
+  }
 
+  /**
+   * Grab the Bitmap options for a given max width and height 
+   * https://code.google.com/p/iosched
+   * 
+   * @param uri The uri to load the bitmap from
+   * @param reqWidth The requested width of the resulting bitmap
+   * @param reqHeight The requested height of the resulting bitmap
+   * @return The options to be used for loading bitmaps
+   */
+  private Options getOptions(final Uri uri, final int reqWidth, final int reqHeight) 
+      throws IOException{
+    BitmapFactory.Options options = new Options();
+    options.inJustDecodeBounds = true;
+    BitmapFactory.decodeStream(mContext.getContentResolver().openInputStream(uri), null, options);
+    return getOptionsInner(options, reqWidth, reqHeight);
+  }
+
+  private Options getOptionsInner(final Options options, final int reqWidth, final int reqHeight){
+    options.inJustDecodeBounds = false;
+    options.inPurgeable = true;
+    options.inInputShareable = true;
+    options.inDither = true;
+
+    final int height = options.outHeight;
+    final int width = options.outWidth;
     int inSampleSize = 1;
-    int height = options.outHeight;
-    int width = options.outWidth;
 
     if (height > reqHeight || width > reqWidth) {
+
       // Calculate ratios of height and width to requested height and width
       final int heightRatio = Math.round((float) height / (float) reqHeight);
       final int widthRatio = Math.round((float) width / (float) reqWidth);
 
-      // Choose the smallest ratio as inSampleSize value, this will guarantee
-      // a final image with both dimensions larger than or equal to the
-      // requested height and width.
+      // Choose the smallest ratio as inSampleSize value, this will guarantee a final image
+      // with both dimensions larger than or equal to the requested height and width.
       inSampleSize = heightRatio < widthRatio ? heightRatio : widthRatio;
 
       // This offers some additional logic in case the image has a strange
       // aspect ratio. For example, a panorama may have a much larger
       // width than height. In these cases the total pixels might still
       // end up being too large to fit comfortably in memory, so we should
-      // be more aggressive with sample down the image (=larger
-      // inSampleSize).
+      // be more aggressive with sample down the image (=larger inSampleSize).
+
       final float totalPixels = width * height;
 
-      // Anything more than 2x the requested pixels we'll sample down
-      // further.
+      // Anything more than 2x the requested pixels we'll sample down further
       final float totalReqPixelsCap = reqWidth * reqHeight * 2;
 
       while (totalPixels / (inSampleSize * inSampleSize) > totalReqPixelsCap) {
+        inSampleSize++;
+      }
+
+      while((height/inSampleSize)>2048 || (width/inSampleSize)>2048){
         inSampleSize++;
       }
     }
@@ -636,6 +639,9 @@ public class ImageManager {
    * @param url The URL of the image
    */
   public static String getFullCacheFileName(Context context, String url) {
+    if(url.startsWith("/storage")){
+      return url;
+    }
     return getCacheDir(context) + "/" + getCacheFileName(url);
   }
 
@@ -818,6 +824,7 @@ class ImageDownloadThread implements Runnable{
 
   @Override
   public boolean equals(final Object o) {
+
     if(getUrl()==null){
       return false;
     }
