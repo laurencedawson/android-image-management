@@ -46,7 +46,7 @@ import android.webkit.MimeTypeMap;
 
 public class ImageManager {
 
-  public static final boolean DEBUG = true;
+  public static final boolean DEBUG = false;
 
   public static final int QUEUE_SIZE = 30;
 
@@ -541,8 +541,10 @@ public class ImageManager {
 
           // Grab the bitmap options
           opts = getOptions(uri, reqWidth, reqHeight);
-          bitmap = BitmapFactory.decodeStream(
-              mContext.getContentResolver().openInputStream(uri), null, opts);
+          InputStream inputStream = mContext.getContentResolver().openInputStream(uri);
+          bitmap = BitmapFactory.decodeStream(inputStream, null, opts);
+          inputStream.close();
+          
         }
 
         // return the decoded bitmap
@@ -586,7 +588,9 @@ public class ImageManager {
       throws IOException{
     BitmapFactory.Options options = new Options();
     options.inJustDecodeBounds = true;
-    BitmapFactory.decodeStream(mContext.getContentResolver().openInputStream(uri), null, options);
+    InputStream inputStream = mContext.getContentResolver().openInputStream(uri);
+    BitmapFactory.decodeStream(inputStream, null, options);
+    inputStream.close();
     return getOptionsInner(options, reqWidth, reqHeight);
   }
 
