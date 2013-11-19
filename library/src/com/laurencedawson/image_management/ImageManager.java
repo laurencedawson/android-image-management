@@ -26,7 +26,6 @@ import java.net.MalformedURLException;
 import java.net.URL;
 import java.security.MessageDigest;
 import java.security.NoSuchAlgorithmException;
-import java.util.Comparator;
 import java.util.Date;
 import java.util.concurrent.BlockingQueue;
 import java.util.concurrent.ConcurrentLinkedQueue;
@@ -41,18 +40,18 @@ import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
 import android.graphics.BitmapFactory.Options;
 import android.net.Uri;
+import android.util.Log;
 import android.util.LruCache;
-import android.webkit.MimeTypeMap;
+
+import com.laurencedawson.image_management.util.ImageDownloadThread;
+import com.laurencedawson.image_management.util.ImageThreadComparable;
 
 public class ImageManager {
 
   public static final boolean DEBUG = false;
+  public static final String TAG = "ImageManager";
 
   public static final int QUEUE_SIZE = 30;
-
-  public static final int LONG_DELAY = 160;
-  public static final int SHORT_DELAY = 80;
-  public static final int NO_DELAY = 0;
 
   public static final int LONG_CONNECTION_TIMEOUT = 10000;
   public static final int LONG_REQUEST_TIMEOUT = 10000;
@@ -64,6 +63,7 @@ public class ImageManager {
   public static final int BACKGROUND_PRIORITY = 0;
 
   public static final String GIF_MIME = "image/gif";
+  public static final String CONTENT_TYPE = "content://";
 
   private Context mContext;
   private final LruCache<String, Bitmap> mBitmapCache;
@@ -95,7 +95,7 @@ public class ImageManager {
     // request priorities. If two requests have equal priorities, they are 
     // sorted according to creation date
     mTaskQueue =  new PriorityBlockingQueue<Runnable>(QUEUE_SIZE, 
-        new ImageThreadComparator());
+        new ImageThreadComparable());
     mActiveTasks = new ConcurrentLinkedQueue<Runnable>();
     mBlockedTasks = new ConcurrentLinkedQueue<Runnable>();
 
@@ -216,16 +216,6 @@ public class ImageManager {
       return true;
     }
 
-    // Next, try to grab the mime type from the url
-    final String extension = MimeTypeMap.getFileExtensionFromUrl(url);
-    if(extension!=null){
-      String mimeType = 
-          MimeTypeMap.getSingleton().getMimeTypeFromExtension(extension);
-      if(mimeType!=null){
-        return mimeType.equals(ImageManager.GIF_MIME);
-      }
-    }
-
     return false;
   }
 
@@ -269,25 +259,18 @@ public class ImageManager {
     final ImageDownloadThread imageDownloadThread = new ImageDownloadThread(){
 
       public void run() {
-
-        // Sleep the request for the specified time
-        if(request!=null && request.mLoadDelay>0){
-          try {
-            Thread.sleep(request.mLoadDelay);
-          } catch (InterruptedException e){
-            if(ImageManager.DEBUG){
-              e.printStackTrace();
-            }
-          }
-        }
-
         File file = null;
 
         // If the URL is not a local reseource, grab the file
-        if(!getUrl().startsWith("content://")){
+        if(!getUrl().startsWith(CONTENT_TYPE)){
 
           // Grab a link to the file
           file = new File(getFullCacheFileName(mContext, getUrl()));
+          
+          // Log the image request
+          if(DEBUG){
+            Log.d(TAG, "Priority: "+getPriority()+"\tDisk: "+file.exists()+"\tCache: "+request.mCacheImage+"\t"+getUrl());
+          }
 
           // If the file doesn't exist, grab it from the network
           if (!file.exists()){
@@ -328,7 +311,7 @@ public class ImageManager {
           // If the bitmap isn't in the cache, try to grab it
           // Or the bitmap was in the cache, but is of no use
           if(bitmap == null){
-            if(!getUrl().startsWith("content://")){
+            if(!getUrl().startsWith(CONTENT_TYPE)){
               bitmap = decodeBitmap(file.getPath(), maxWidth, maxHeight);
             }else{
               bitmap = decodeBitmap(getUrl(), maxWidth, maxHeight);
@@ -379,7 +362,6 @@ public class ImageManager {
   /**
    * Grab and save an image directly to disk
    * @param file The Bitmap file
-   * @param url The URL of the image
    * @param imageCallback The callback associated with the request
    */
   public static void cacheImage(final File file, ImageRequest imageCallback) {
@@ -387,7 +369,6 @@ public class ImageManager {
     HttpURLConnection urlConnection = null;
     FileOutputStream fileOutputStream = null;
     InputStream inputStream = null;
-    boolean isGif = false;
 
     try{
       // Setup the connection
@@ -403,16 +384,10 @@ public class ImageManager {
       // Connect
       inputStream = urlConnection.getInputStream();
 
-      // Do not proceed if the file wasn't downloaded
+      // Do not proceed if the connection couldn't be established
       if(urlConnection.getResponseCode()==404){
         urlConnection.disconnect();
         return;
-      }
-
-      // Check if the image is a GIF
-      String contentType = urlConnection.getHeaderField("Content-Type");
-      if(contentType!=null){
-        isGif = contentType.equals(GIF_MIME);
       }
 
       // Grab the length of the image
@@ -433,32 +408,9 @@ public class ImageManager {
       int byteRead = 0;
       int totalRead = 0;
       final byte[] buffer = new byte[8192];
-      int frameCount = 0;
 
       // Download the image
       while ((byteRead = inputStream.read(buffer)) != -1) {
-
-        // If the image is a gif, count the start of frames
-        if(isGif){
-          for(int i=0;i<byteRead-3;i++){
-            if( buffer[i] == 33 && buffer[i+1] == -7 && buffer[i+2] == 4 ){
-              frameCount++;
-
-              // Once we have at least one frame, stop the download
-              if(frameCount>1){
-                fileOutputStream.write(buffer, 0, i);
-                fileOutputStream.close();
-
-                imageCallback.sendProgressUpdate(imageCallback.mUrl, 100);
-                imageCallback.sendCachedCallback(imageCallback.mUrl, true);
-
-                urlConnection.disconnect();
-                return;
-              }
-            }
-          }
-        }
-
         // Write the buffer to the file and update the total number of bytes
         // read so far (used for the callback)
         fileOutputStream.write(buffer, 0, byteRead);
@@ -525,7 +477,7 @@ public class ImageManager {
       Bitmap bitmap = null;
       try{
         // Handle the bitmap as a file
-        if(!filename.startsWith("content://")){
+        if(!filename.startsWith(CONTENT_TYPE)){
           File file = new File(filename);
           // Check if the file doesn't exist or has no content
           if(!file.exists() || file.exists() && file.length()==0 ){
@@ -544,7 +496,7 @@ public class ImageManager {
           InputStream inputStream = mContext.getContentResolver().openInputStream(uri);
           bitmap = BitmapFactory.decodeStream(inputStream, null, opts);
           inputStream.close();
-          
+
         }
 
         // return the decoded bitmap
@@ -754,102 +706,5 @@ public class ImageManager {
         }
       }
     }
-  }
-}
-
-/**
- * A simple comparator which favours ImageDownloadThreads with higher 
- * priorities (such as UI requests over background requests)
- * @author Laurence Dawson
- *
- */
-class ImageThreadComparator implements Comparator<Runnable>{
-
-  @Override
-  public int compare(final Runnable lhs, final Runnable rhs) {
-
-    if(lhs instanceof ImageDownloadThread && rhs instanceof ImageDownloadThread){
-      // Favour a higher priority
-      if(((ImageDownloadThread)lhs).getPriority()>((ImageDownloadThread)rhs).getPriority()){
-        return -1;
-      } else if(((ImageDownloadThread)lhs).getPriority()<((ImageDownloadThread)rhs).getPriority()){
-        return 1;
-      } 
-
-      // Favour a lower creation time
-      else if(((ImageDownloadThread)lhs).getCreated()>((ImageDownloadThread)rhs).getCreated()){
-        return 1;
-      }else if(((ImageDownloadThread)lhs).getCreated()<((ImageDownloadThread)rhs).getCreated()){
-        return -1;
-      }
-    }
-
-    return 0;
-  }  
-
-}
-
-/**
- * A simple Runnable object that can be given a priority, to be used with
- * ImageThreadComparator and PriorityBlockingQueue
- * @author Laurence Dawson
- *
- */
-class ImageDownloadThread implements Runnable{      
-  private int priority;       
-  private String url;
-  private long created;
-
-
-  @Override
-  public void run() {
-    // To be overridden
-  }
-
-  public int getPriority() {
-    return priority;
-  }
-
-  public void setPriority(final int priority) {
-    this.priority = priority;
-  }
-
-  public String getUrl(){
-    return url;
-  }
-
-  public void setUrl(String url){
-    this.url = url;
-  }
-
-  public long getCreated(){
-    return created;
-  }
-
-  public void setCreated(long created){
-    this.created = created;
-  }
-
-  @Override
-  public boolean equals(final Object o) {
-
-    if(getUrl()==null){
-      return false;
-    }
-
-    if(o==null){
-      return false;
-    }
-
-    if(o instanceof ImageDownloadThread &&
-        ((ImageDownloadThread)o).getUrl().equals(getUrl())){
-      return true;
-    }
-    return super.equals(o);
-  }
-
-  @Override
-  public int hashCode() {
-    return getUrl().hashCode();
   }
 }

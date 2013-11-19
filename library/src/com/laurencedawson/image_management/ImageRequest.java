@@ -27,7 +27,6 @@ public class ImageRequest{
   public String mUrl;
   public ImageListener mImageListener;
   public boolean mCacheImage;
-  public int mLoadDelay;
   public int mMaxWidth;
   public int mMaxHeight;
   public long mCreated;
@@ -36,18 +35,15 @@ public class ImageRequest{
    * Initialize a newly created ImageCallback object
    * @param context The calling {@link Context}
    * @param cache Should the image requested be cached in memory
-   * @param delay Should the request delay when loading
    * @param maxWidth The maximum width the image should have
    * @param maxHeight The maximum height the image should have
    * @param listener An ImageListener to enable {@link ImageManager} callbacks
    */
   public ImageRequest( final String url, final Context context, 
-      final boolean cache, final int delay, final int maxWidth,
-      final int maxHeight, final ImageListener listener){
+      final boolean cache, final int maxWidth, final int maxHeight, final ImageListener listener){
     this.mUrl = url;
     this.mContext = context;
     this.mCacheImage = cache;
-    this.mLoadDelay = delay;
     this.mMaxWidth = maxWidth;
     this.mMaxHeight = maxHeight;
     this.mImageListener = listener;
@@ -65,7 +61,6 @@ public class ImageRequest{
     this.mUrl = url;
     this.mContext = context;
     this.mCacheImage = cache;
-    this.mLoadDelay = ImageManager.NO_DELAY;
     this.mMaxWidth = ImageManager.MAX_WIDTH;
     this.mMaxHeight = ImageManager.MAX_HEIGHT;
     this.mImageListener = listener;
